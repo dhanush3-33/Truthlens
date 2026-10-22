@@ -1,3 +1,13 @@
+---
+title: TruthLens AI Backend
+emoji: 🔍
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # TruthLens AI — AI Fake News & Claim Analyzer
 
 TruthLens AI is a full-stack web application that helps users investigate news headlines,
@@ -100,48 +110,51 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## Deployment (Netlify + Render)
+## Deployment — 100% free, no credit card
 
 Netlify cannot host Python, so the app deploys as two free services:
 
-| Service | What | Config file |
-|---|---|---|
-| **Render** | Flask backend | `render.yaml` (Blueprint) |
-| **Netlify** | React frontend | `frontend/netlify.toml` |
+| Service | What | Config | Card required? |
+|---|---|---|---|
+| **Hugging Face Spaces** | Flask backend (Docker) | `backend/Dockerfile` | **No** |
+| **Netlify** | React frontend | `frontend/netlify.toml` | **No** |
 
-### Step 1 — Deploy the backend on Render
+### Step 1 — Backend on Hugging Face Spaces (free)
 
-1. Push this repo to GitHub.
-2. Go to [render.com](https://render.com) → **New → Blueprint** → select your repo.
-   Render detects `render.yaml` and creates the service automatically.
-   (Or **New → Web Service** manually: root `backend`, build `pip install -r requirements.txt`,
-   start `python app.py`.)
-3. In the service **Environment** tab, set:
-   - `GEMINI_API_KEY` = your real key
-   - `ALLOWED_ORIGINS` = `https://your-site.netlify.app,http://localhost:5173`
-4. Note the service URL, e.g. `https://truthlens-ai-backend.onrender.com`.
-   Health check: `https://truthlens-ai-backend.onrender.com/api/health`
+1. Push this repo to GitHub (done: `dhanush3-33/Truthlens`).
+2. Sign up at [huggingface.co](https://huggingface.co) (free, no card).
+3. **New Space** → name it (e.g. `truthlens-backend`) → SDK: **Docker** → Free CPU → Create.
+4. In the Space → **Settings → Build and deploy** → connect this GitHub repo and set
+   **Path to Dockerfile** to `backend` (the Dockerfile builds the Flask app on port 7860).
+5. In **Settings → Variables and secrets**, add:
+   - Secret: `GEMINI_API_KEY` = your real key
+   - Variables: `EVIDENCE_PROVIDER` = `auto`, `ALLOWED_ORIGINS` =
+     `https://YOUR-SITE.netlify.app,http://localhost:5173`
+6. Your backend URL will be:
+   `https://huggingface.co/spaces/YOUR-USER/truthlens-backend`
+   (direct API: `https://YOUR-USER-truthlens-backend.hf.space/api/health`)
 
-> Render free services spin down after inactivity — the first request after idle can take ~30s.
+> The Space builds the Docker image from `backend/Dockerfile` in ~2–3 minutes on first deploy.
 
-### Step 2 — Deploy the frontend on Netlify
+### Step 2 — Frontend on Netlify (free)
 
 1. Go to [netlify.com](https://netlify.com) → **Add new site → Import an existing project** → GitHub → this repo.
 2. Netlify auto-detects `frontend/netlify.toml` (base `frontend`, build `npm run build`, publish `dist`).
 3. Before deploying, add the env var under **Site settings → Environment variables**:
-   - `VITE_API_BASE_URL` = `https://truthlens-ai-backend.onrender.com` (your Render URL)
+   - `VITE_API_BASE_URL` = `https://YOUR-USER-truthlens-backend.hf.space` (your HF Space direct URL)
 4. Deploy. Then copy the Netlify URL (e.g. `https://your-site.netlify.app`) back into
-   Render's `ALLOWED_ORIGINS` and redeploy the backend so CORS accepts it.
+   the Space's `ALLOWED_ORIGINS` variable and restart the Space so CORS accepts it.
 
 ### Step 3 — Verify
 
-- `https://<backend>.onrender.com/api/health` → JSON with `"status": "ok"`
+- `https://YOUR-USER-truthlens-backend.hf.space/api/health` → JSON with `"status": "ok"`
 - `https://<site>.netlify.app` → the app loads; run a sample claim end-to-end
 
 **Notes**
-- Never put `GEMINI_API_KEY` in Netlify env vars — the frontend never needs it; keys stay backend-only.
-- `DEMO_MODE=true` (default in `render.yaml`) means the site works even before you paste the
-  Gemini key, clearly labeled as DEMO until the key is set.
+- Never put `GEMINI_API_KEY` in Netlify env vars — the frontend never needs it; keys stay backend-only
+  (set as a secret on the Space, never in the repo; `.dockerignore` keeps `.env` out of the image).
+- `DEMO_MODE=true` means the site works even before you add the Gemini key, clearly labeled as DEMO.
+- Optional alternative: `render.yaml` is kept for Render users (note: Render now asks for a card).
 - Local Windows shortcut: double-click `start-dev.bat` to run both servers locally.
 
 ---
