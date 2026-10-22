@@ -95,8 +95,27 @@ async function callGemini(prompt) {
     }
     clearTimeout(timer)
 
-    if (resp.status === 429 || resp.status === 503) {
-      lastError = new AIError(`Gemini is temporarily unavailable (HTTP ${resp.status}) — high demand or rate limit.`)
+    if (resp.status === 429) {
+      const body = await resp.text().catch(() => '')
+      // Daily-quota exhaustion cannot be fixed by retrying — fail fast with the reset hint.
+      const daily = /PerDay|per day|retryDelay.*\d{4,}s|Please retry in \d+h/i.test(body)
+      if (daily) {
+        const reset = body.match(/retry in (\d+h\d+m\d+s|\d+h\d+m)/i)
+        throw new AIError(
+          `Gemini daily quota exhausted (free tier: 20 requests/day/model). ` +
+            (reset ? `Resets in ~${reset[1]}. ` : '') +
+            `Check https://ai.dev/rate-limit — or add billing to raise the limit.`,
+        )
+      }
+      lastError = new AIError(`Gemini rate limit hit (HTTP 429) — retry shortly.`)
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, attempt * 2000))
+        continue
+      }
+      throw lastError
+    }
+    if (resp.status === 503) {
+      lastError = new AIError('Gemini is temporarily unavailable (HTTP 503) — high demand.')
       if (attempt < 3) {
         await new Promise((r) => setTimeout(r, attempt * 2000))
         continue

@@ -81,7 +81,23 @@ export default async function handler(req, res) {
   // Phase 3: evidence comparison / verdict
   let compareError = null
   let verdictBlock
-  if (aiAvailable) {
+  if (!aiAvailable) {
+    verdictBlock = demoCompare(sources)
+  } else if (!sources.length) {
+    // No evidence → verdict is Unverified by rule; skip the 2nd Gemini call (saves daily quota).
+    verdictBlock = {
+      verdict: 'Unverified',
+      explanation:
+        'No usable external evidence was retrieved for this claim, so no verdict can be issued. Absence of evidence is not evidence that the claim is false.',
+      supporting_points: [],
+      contradicting_points: [],
+      missing_context: [],
+      limitations: [
+        'Evidence retrieval returned no sources — verdict held at Unverified by design.',
+        'This is AI-assisted analysis, not absolute truth.',
+      ],
+    }
+  } else {
     try {
       verdictBlock = await compareEvidence(analysis.central_claim, analysis, sources)
     } catch (err) {
@@ -95,8 +111,6 @@ export default async function handler(req, res) {
         limitations: ['The verdict step failed; treat this result as inconclusive.'],
       }
     }
-  } else {
-    verdictBlock = demoCompare(sources)
   }
 
   return json(

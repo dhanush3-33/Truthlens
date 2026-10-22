@@ -105,11 +105,26 @@ def _call_gemini(prompt: str) -> str:
         except requests.RequestException as exc:
             raise AIError(f"Could not reach the AI provider: {exc.__class__.__name__}.")
 
-        if resp.status_code == 429 or resp.status_code == 503:
-            last_error = AIError(
-                "Gemini is temporarily unavailable (HTTP %s) — high demand or rate limit."
-                % resp.status_code
-            )
+        if resp.status_code == 429:
+            try:
+                body = resp.text
+            except Exception:
+                body = ""
+            # Daily-quota exhaustion cannot be fixed by retrying — fail fast with reset hint.
+            if re.search(r"PerDay|per day|Please retry in \d+h", body, re.I):
+                m = re.search(r"[Rr]etry in (\d+h\d+m\d+s|\d+h\d+m)", body)
+                raise AIError(
+                    "Gemini daily quota exhausted (free tier: 20 requests/day/model). "
+                    + (f"Resets in ~{m.group(1)}. " if m else "")
+                    + "Check https://ai.dev/rate-limit — or add billing to raise the limit."
+                )
+            last_error = AIError("Gemini rate limit hit (HTTP 429) — retry shortly.")
+            if attempt < max_attempts:
+                time.sleep(2 * attempt)
+                continue
+            raise last_error
+        if resp.status_code == 503:
+            last_error = AIError("Gemini is temporarily unavailable (HTTP 503) — high demand.")
             if attempt < max_attempts:
                 time.sleep(2 * attempt)
                 continue
