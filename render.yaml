@@ -1,0 +1,25 @@
+# Render Blueprint — TruthLens AI backend (Flask)
+services:
+  - type: web
+    name: truthlens-ai-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python app.py"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # Set these in the Render dashboard after the service is created:
+      - key: GEMINI_API_KEY
+        sync: false # paste your real key in the Render dashboard
+      - key: GEMINI_MODEL
+        value: "gemini-3.5-flash"
+      - key: EVIDENCE_PROVIDER
+        value: "auto"
+      - key: ALLOWED_ORIGINS
+        value: "https://your-site.netlify.app,http://localhost:5173"
+      - key: DEMO_MODE
+        value: "true"
+      - key: AI_TIMEOUT_SECONDS
+        value: "90"
+    healthCheckPath: "/api/health"

@@ -1,0 +1,25 @@
+# --- secrets & env ---
+.env
+backend/.env
+frontend/.env
+*.env.local
+
+# --- python ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# --- node ---
+frontend/node_modules/
+frontend/dist/
+frontend/dev.log
+
+# --- misc ---
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

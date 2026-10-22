@@ -1,0 +1,25 @@
+# Netlify configuration — TruthLens AI frontend
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Set the backend URL here in the Netlify UI (Site settings → Environment variables)
+  # BEFORE the first deploy, or re-deploy after adding it:
+  # VITE_API_BASE_URL = "https://your-backend.onrender.com"
+
+# SPA fallback — single-page app routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Security & performance headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
