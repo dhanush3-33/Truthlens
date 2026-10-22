@@ -110,51 +110,41 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## Deployment — 100% free, no credit card
+## Deployment — 100% free, no credit card (Vercel)
 
-Netlify cannot host Python, so the app deploys as two free services:
+The whole app (static frontend **and** serverless API) deploys on **Vercel's Hobby tier —
+free, no card required**. The Flask backend remains for local development; `frontend/api/`
+contains a Node port of the same API for production.
 
-| Service | What | Config | Card required? |
-|---|---|---|---|
-| **Hugging Face Spaces** | Flask backend (Docker) | `backend/Dockerfile` | **No** |
-| **Netlify** | React frontend | `frontend/netlify.toml` | **No** |
+| Piece | Where it runs on Vercel |
+|---|---|
+| React frontend | Static build (`npm run build` → `dist`) |
+| `/api/analyze`, `/api/health` | Serverless functions (`frontend/api/*.js`, 60s max) |
 
-### Step 1 — Backend on Hugging Face Spaces (free)
+### Steps
 
 1. Push this repo to GitHub (done: `dhanush3-33/Truthlens`).
-2. Sign up at [huggingface.co](https://huggingface.co) (free, no card).
-3. **New Space** → name it (e.g. `truthlens-backend`) → SDK: **Docker** → Free CPU → Create.
-4. In the Space → **Settings → Build and deploy** → connect this GitHub repo and set
-   **Path to Dockerfile** to `backend` (the Dockerfile builds the Flask app on port 7860).
-5. In **Settings → Variables and secrets**, add:
-   - Secret: `GEMINI_API_KEY` = your real key
-   - Variables: `EVIDENCE_PROVIDER` = `auto`, `ALLOWED_ORIGINS` =
-     `https://YOUR-SITE.netlify.app,http://localhost:5173`
-6. Your backend URL will be:
-   `https://huggingface.co/spaces/YOUR-USER/truthlens-backend`
-   (direct API: `https://YOUR-USER-truthlens-backend.hf.space/api/health`)
+2. Sign up at [vercel.com](https://vercel.com) with GitHub (free, **no credit card**).
+3. **Add New → Project** → import `Truthlens` → Vercel auto-detects Vite; set
+   **Root Directory** to `frontend`.
+4. Before deploying, add Environment Variables (Settings → Environment Variables):
+   - `GEMINI_API_KEY` = your real key
+   - `GEMINI_MODEL` = `gemini-3.5-flash`
+   - `EVIDENCE_PROVIDER` = `auto`
+5. **Deploy.** Your app + API are on one URL, e.g. `https://truthlens.vercel.app`.
+   - API health check: `https://truthlens.vercel.app/api/health`
+   - In production the frontend calls its own `/api` (same origin) — no CORS setup needed.
 
-> The Space builds the Docker image from `backend/Dockerfile` in ~2–3 minutes on first deploy.
-
-### Step 2 — Frontend on Netlify (free)
-
-1. Go to [netlify.com](https://netlify.com) → **Add new site → Import an existing project** → GitHub → this repo.
-2. Netlify auto-detects `frontend/netlify.toml` (base `frontend`, build `npm run build`, publish `dist`).
-3. Before deploying, add the env var under **Site settings → Environment variables**:
-   - `VITE_API_BASE_URL` = `https://YOUR-USER-truthlens-backend.hf.space` (your HF Space direct URL)
-4. Deploy. Then copy the Netlify URL (e.g. `https://your-site.netlify.app`) back into
-   the Space's `ALLOWED_ORIGINS` variable and restart the Space so CORS accepts it.
-
-### Step 3 — Verify
-
-- `https://YOUR-USER-truthlens-backend.hf.space/api/health` → JSON with `"status": "ok"`
-- `https://<site>.netlify.app` → the app loads; run a sample claim end-to-end
+> Vercel Hobby: free, 100 GB bandwidth, serverless functions up to 60s — enough for the
+> two Gemini calls. Environment variable changes require a redeploy to take effect.
 
 **Notes**
-- Never put `GEMINI_API_KEY` in Netlify env vars — the frontend never needs it; keys stay backend-only
-  (set as a secret on the Space, never in the repo; `.dockerignore` keeps `.env` out of the image).
-- `DEMO_MODE=true` means the site works even before you add the Gemini key, clearly labeled as DEMO.
-- Optional alternative: `render.yaml` is kept for Render users (note: Render now asks for a card).
+- The API key lives only in Vercel's environment settings — never in the repo; `frontend/api/_lib.js`
+  is a helper file (underscore prefix = not deployed as a function).
+- `DEMO_MODE=true` (default) means the site works even before you add the Gemini key,
+  clearly labeled as DEMO until the key is set.
+- Alternatives (may require a card — check current pricing): Render (`render.yaml` kept),
+  Hugging Face Docker Spaces, Netlify + HF Spaces.
 - Local Windows shortcut: double-click `start-dev.bat` to run both servers locally.
 
 ---
