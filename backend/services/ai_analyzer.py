@@ -1,4 +1,4 @@
-"""Gemini-based claim analysis via the REST API (no SDK dependency)."""
+"""LLM-based claim analysis via REST APIs (Groq primary, Gemini fallback)."""
 
 import json
 import os
@@ -7,6 +7,7 @@ import time
 
 import requests
 
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
@@ -59,13 +60,35 @@ class AIError(Exception):
     """Raised when the AI provider fails or returns unusable output."""
 
 
-def get_api_key():
+def _groq_key():
+    return (os.getenv("GROQ_API_KEY") or "").strip()
+
+
+def _gemini_key():
     return (os.getenv("GEMINI_API_KEY") or "").strip()
 
 
-def is_configured():
-    key = get_api_key()
+def _valid(key):
     return bool(key) and not key.lower().startswith("your_")
+
+
+def get_api_key():
+    """Active provider key: Groq first, then Gemini."""
+    if _valid(_groq_key()):
+        return _groq_key()
+    return _gemini_key()
+
+
+def active_provider():
+    if _valid(_groq_key()):
+        return "groq"
+    if _valid(_gemini_key()):
+        return "gemini"
+    return None
+
+
+def is_configured():
+    return active_provider() is not None
 
 
 def _timeout():
@@ -75,8 +98,85 @@ def _timeout():
         return 45.0
 
 
+def _retry_or_raise(status, body, last_error, attempt, max_attempts, provider):
+    """Shared429/5xx handling. Fail fast on long-horizon quota resets."""
+    if status == 429:
+        if re.search(r"PerDay|per day|Please retry in \d+h|resets in|retry after \d+m", body or "", re.I):
+            m = re.search(r"[Rr]etry (?:in|after) (\d+h\d+m\d+s|\d+h\d+m|\d+m\d+s)", body or "")
+            raise AIError(
+                f"{provider} rate/quota limit reached (HTTP 429). "
+                + (f"Resets in ~{m.group(1)}. " if m else "")
+                + "The free tier has a small request budget — wait for the reset or upgrade the plan."
+            )
+        last_error = AIError(f"{provider} rate limit hit (HTTP 429) — retry shortly.")
+        if attempt < max_attempts:
+            time.sleep(2 * attempt)
+            return None  # signal: retry
+        raise last_error
+    if status == 503:
+        last_error = AIError(f"{provider} is temporarily unavailable (HTTP 503) — high demand.")
+        if attempt < max_attempts:
+            time.sleep(2 * attempt)
+            return None
+        raise last_error
+    if status in (401, 403):
+        raise AIError(f"{provider} API key is invalid or lacks access (HTTP {status}).")
+    if status >= 500:
+        raise AIError(f"{provider} service error (HTTP {status}).")
+    if status >= 400:
+        raise AIError(f"{provider} request rejected (HTTP {status}): {(body or '')[:200]}")
+    return True  # signal: success
+
+
+def _call_groq(prompt: str) -> str:
+    model = (os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b").strip()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer %s" % _groq_key(),
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are TruthLens AI, a rigorous fact-verification assistant. Always answer with valid JSON only.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(GROQ_URL, headers=headers, json=payload, timeout=_timeout())
+        except requests.Timeout:
+            if attempt < max_attempts:
+                time.sleep(2 * attempt)
+                continue
+            raise AIError("Groq timed out. Please try again.")
+        except requests.RequestException as exc:
+            raise AIError("Could not reach Groq: %s." % exc.__class__.__name__)
+
+        result = _retry_or_raise(resp.status_code, resp.text, None, attempt, max_attempts, "Groq")
+        if result is True:
+            break
+    else:
+        raise AIError("Groq request failed after multiple attempts.")
+
+    try:
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise AIError("Groq returned a malformed response.")
+    if not text or not text.strip():
+        raise AIError("Groq returned an empty response.")
+    return text
+
+
 def _call_gemini(prompt: str) -> str:
-    key = get_api_key()
+    key = _gemini_key()
     model = (os.getenv("GEMINI_MODEL") or "gemini-3.5-flash").strip()
     url = GEMINI_URL.format(model=model)
     headers = {"Content-Type": "application/json", "x-goog-api-key": key}
@@ -90,54 +190,23 @@ def _call_gemini(prompt: str) -> str:
         "safetySettings": [],
     }
 
-    # Retry transient failures (429/503/timeouts) with short backoff.
     max_attempts = 3
-    last_error = None
     for attempt in range(1, max_attempts + 1):
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=_timeout())
         except requests.Timeout:
-            last_error = AIError("The AI provider timed out. Please try again.")
             if attempt < max_attempts:
                 time.sleep(2 * attempt)
                 continue
-            raise last_error
+            raise AIError("Gemini timed out. Please try again.")
         except requests.RequestException as exc:
-            raise AIError(f"Could not reach the AI provider: {exc.__class__.__name__}.")
+            raise AIError("Could not reach the AI provider: %s." % exc.__class__.__name__)
 
-        if resp.status_code == 429:
-            try:
-                body = resp.text
-            except Exception:
-                body = ""
-            # Daily-quota exhaustion cannot be fixed by retrying — fail fast with reset hint.
-            if re.search(r"PerDay|per day|Please retry in \d+h", body, re.I):
-                m = re.search(r"[Rr]etry in (\d+h\d+m\d+s|\d+h\d+m)", body)
-                raise AIError(
-                    "Gemini daily quota exhausted (free tier: 20 requests/day/model). "
-                    + (f"Resets in ~{m.group(1)}. " if m else "")
-                    + "Check https://ai.dev/rate-limit — or add billing to raise the limit."
-                )
-            last_error = AIError("Gemini rate limit hit (HTTP 429) — retry shortly.")
-            if attempt < max_attempts:
-                time.sleep(2 * attempt)
-                continue
-            raise last_error
-        if resp.status_code == 503:
-            last_error = AIError("Gemini is temporarily unavailable (HTTP 503) — high demand.")
-            if attempt < max_attempts:
-                time.sleep(2 * attempt)
-                continue
-            raise last_error
-        if resp.status_code == 401 or resp.status_code == 403:
-            raise AIError("Gemini API key is invalid or lacks access (HTTP %s)." % resp.status_code)
-        if resp.status_code >= 500:
-            raise AIError("Gemini service error (HTTP %s)." % resp.status_code)
-        if resp.status_code >= 400:
-            raise AIError("Gemini request rejected (HTTP %s): %s" % (resp.status_code, resp.text[:200]))
-        break
+        result = _retry_or_raise(resp.status_code, resp.text, None, attempt, max_attempts, "Gemini")
+        if result is True:
+            break
     else:
-        raise last_error or AIError("Gemini request failed after multiple attempts.")
+        raise AIError("Gemini request failed after multiple attempts.")
 
     try:
         data = resp.json()
@@ -145,6 +214,13 @@ def _call_gemini(prompt: str) -> str:
     except (ValueError, KeyError, IndexError, TypeError):
         raise AIError("Gemini returned a malformed response.")
     return text
+
+
+def _call_llm(prompt: str) -> str:
+    """Dispatch to the configured provider (Groq when its key is present)."""
+    if active_provider() == "groq":
+        return _call_groq(prompt)
+    return _call_gemini(prompt)
 
 
 def _parse_json(text: str) -> dict:
@@ -202,7 +278,7 @@ Guidelines:
 {text}
 </user_input>
 """
-    raw = _call_gemini(prompt)
+    raw = _call_llm(prompt)
     data = _parse_json(raw)
 
     central = data.get("central_claim")
@@ -272,7 +348,7 @@ VERDICT RULES:
 {evidence_text[:9000]}
 </evidence>
 """
-    raw = _call_gemini(prompt)
+    raw = _call_llm(prompt)
     data = _parse_json(raw)
 
     verdict = str(data.get("verdict") or "Unverified").strip().title()

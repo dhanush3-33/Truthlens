@@ -43,9 +43,18 @@ export function json(res, status, body, req) {
   res.end(JSON.stringify(body))
 }
 
-function aiConfigured() {
-  const key = (process.env.GEMINI_API_KEY || '').trim()
+function validKey(key) {
   return Boolean(key) && !key.toLowerCase().startsWith('your_')
+}
+
+function activeProvider() {
+  if (validKey((process.env.GROQ_API_KEY || '').trim())) return 'groq'
+  if (validKey((process.env.GEMINI_API_KEY || '').trim())) return 'gemini'
+  return null
+}
+
+function aiConfigured() {
+  return activeProvider() !== null
 }
 
 function demoEnabled() {
@@ -62,6 +71,85 @@ function searchTimeoutMs() {
 }
 
 class AIError extends Error {}
+
+async function callGroq(prompt) {
+  const key = (process.env.GROQ_API_KEY || '').trim()
+  const model = (process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim()
+  const url = 'https://api.groq.com/openai/v1/chat/completions'
+  const payload = {
+    model,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are TruthLens AI, a rigorous fact-verification assistant. Always answer with valid JSON only.',
+      },
+      { role: 'user', content: prompt },
+    ],
+    temperature: 0.1,
+    max_tokens: 2048,
+    response_format: { type: 'json_object' },
+  }
+
+  let lastError = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), aiTimeoutMs())
+    let resp
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+    } catch {
+      clearTimeout(timer)
+      lastError = new AIError('Groq timed out. Please try again.')
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, attempt * 2000))
+        continue
+      }
+      throw lastError
+    }
+    clearTimeout(timer)
+
+    if (resp.status === 429) {
+      const body = await resp.text().catch(() => '')
+      if (/resets|retry-after|retry after \d+m|\bper day\b/i.test(body)) {
+        const reset = body.match(/(?:retry|resets?)(?: in| after)? (\d+h\d+m|\d+m\d+s|\d+s)/i)
+        throw new AIError(
+          `Groq rate/quota limit reached (HTTP 429). ` +
+            (reset ? `Resets in ~${reset[1]}. ` : '') +
+            `The free tier has a small request budget — wait for the reset or check the Groq console.`,
+        )
+      }
+      lastError = new AIError('Groq rate limit hit (HTTP 429) — retry shortly.')
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, attempt * 2000))
+        continue
+      }
+      throw lastError
+    }
+    if (resp.status === 503) {
+      lastError = new AIError('Groq is temporarily unavailable (HTTP 503) — high demand.')
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, attempt * 2000))
+        continue
+      }
+      throw lastError
+    }
+    if (resp.status === 401 || resp.status === 403) throw new AIError(`Groq API key is invalid or lacks access (HTTP ${resp.status}).`)
+    if (resp.status >= 500) throw new AIError(`Groq service error (HTTP ${resp.status}).`)
+    if (resp.status >= 400) throw new AIError(`Groq request rejected (HTTP ${resp.status}).`)
+
+    const data = await resp.json().catch(() => null)
+    const text = data?.choices?.[0]?.message?.content
+    if (!text || !text.trim()) throw new AIError('Groq returned an empty response.')
+    return text
+  }
+  throw lastError || new AIError('Groq request failed after multiple attempts.')
+}
 
 async function callGemini(prompt) {
   const key = (process.env.GEMINI_API_KEY || '').trim()
@@ -132,6 +220,10 @@ async function callGemini(prompt) {
     return text
   }
   throw lastError || new AIError('Gemini request failed after multiple attempts.')
+}
+
+async function callLLM(prompt) {
+  return activeProvider() === 'groq' ? callGroq(prompt) : callGemini(prompt)
 }
 
 function parseJson(text) {
@@ -209,7 +301,7 @@ Guidelines:
 ${text}
 </user_input>
 `
-  const data = parseJson(await callGemini(prompt))
+  const data = parseJson(await callLLM(prompt))
   const central = data.central_claim
   if (typeof central !== 'string' || !central.trim()) throw new AIError('AI did not return a central claim.')
   const entities = data.entities && typeof data.entities === 'object' ? data.entities : {}
@@ -270,7 +362,7 @@ ${JSON.stringify(analysis).slice(0, 2000)}
 ${evidenceText.slice(0, 9000)}
 </evidence>
 `
-  const data = parseJson(await callGemini(prompt))
+  const data = parseJson(await callLLM(prompt))
   let verdict = String(data.verdict || 'Unverified').trim()
   verdict = verdict.charAt(0).toUpperCase() + verdict.slice(1).toLowerCase()
   if (verdict === 'Supported' || verdict === 'Contradicted' || verdict === 'Misleading' || verdict === 'Unverified') {
@@ -325,8 +417,8 @@ export function demoAnalyze(text) {
 
 export function demoCompare(sources) {
   const explanation = sources.length
-    ? 'DEMO MODE: sources were retrieved but no AI model is configured to weigh them, so no verdict can be issued. Configure GEMINI_API_KEY to enable real analysis.'
-    : 'DEMO MODE: no AI model and no usable evidence were available, so this claim cannot be verified. Configure GEMINI_API_KEY and a search provider for real analysis.'
+    ? 'DEMO MODE: sources were retrieved but no AI model is configured to weigh them, so no verdict can be issued. Configure GROQ_API_KEY to enable real analysis.'
+    : 'DEMO MODE: no AI model and no usable evidence were available, so this claim cannot be verified. Configure GROQ_API_KEY and a search provider for real analysis.'
   return {
     verdict: 'Unverified',
     explanation,
@@ -560,7 +652,7 @@ export async function searchEvidence(queries) {
 
 // ----------------------------- orchestration -------------------------------
 
-export { aiConfigured, demoEnabled }
+export { aiConfigured, demoEnabled, activeProvider }
 
 export const DISCLAIMER =
   'TruthLens AI provides AI-assisted analysis of public information. Verdicts are probabilistic interpretations of retrieved evidence, not absolute truth. Always consult primary sources before making decisions.'

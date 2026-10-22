@@ -1,5 +1,5 @@
 // GET /api/health — Vercel serverless function
-import { json, aiConfigured, demoEnabled, MAX_CHARS } from './_lib.js'
+import { json, aiConfigured, demoEnabled, activeProvider, MAX_CHARS } from './_lib.js'
 
 export default function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -14,6 +14,7 @@ export default function handler(req, res) {
     {
       status: 'ok',
       ai_configured: aiConfigured(),
+      ai_provider: activeProvider(),
       demo_mode: demoEnabled(),
       evidence_provider: (process.env.EVIDENCE_PROVIDER || 'auto').trim(),
       max_input_chars: MAX_CHARS,

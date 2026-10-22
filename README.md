@@ -88,7 +88,7 @@ copy .env.example .env      # Windows  (macOS/Linux: cp .env.example .env)
 Edit `backend/.env` and set at least:
 
 ```env
-GEMINI_API_KEY=your_real_key_here
+GROQ_API_KEY=your_real_key_here
 ```
 
 Run:
@@ -128,15 +128,15 @@ contains a Node port of the same API for production.
 3. **Add New → Project** → import `Truthlens` → Vercel auto-detects Vite; set
    **Root Directory** to `frontend`.
 4. Before deploying, add Environment Variables (Settings → Environment Variables):
-   - `GEMINI_API_KEY` = your real key
-   - `GEMINI_MODEL` = `gemini-3.5-flash`
+   - `GROQ_API_KEY` = your real key (**Groq** — fast free tier, https://console.groq.com/keys)
+   - `GROQ_MODEL` = `openai/gpt-oss-120b`
    - `EVIDENCE_PROVIDER` = `auto`
 5. **Deploy.** Your app + API are on one URL, e.g. `https://truthlens.vercel.app`.
    - API health check: `https://truthlens.vercel.app/api/health`
    - In production the frontend calls its own `/api` (same origin) — no CORS setup needed.
 
 > Vercel Hobby: free, 100 GB bandwidth, serverless functions up to 60s — enough for the
-> two Gemini calls. Environment variable changes require a redeploy to take effect.
+> two AI calls. Environment variable changes require a redeploy to take effect.
 
 **Notes**
 - The API key lives only in Vercel's environment settings — never in the repo; `frontend/api/_lib.js`
@@ -155,15 +155,17 @@ contains a Node port of the same API for production.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `GEMINI_API_KEY` | **Yes** (for real analysis) | — | Gemini API key. Never commit the real key. |
-| `GEMINI_MODEL` | No | `gemini-3.5-flash` | Gemini model id. |
+| `GROQ_API_KEY` | **Yes** (for real analysis) | — | Groq API key (primary provider). Never commit the real key. |
+| `GROQ_MODEL` | No | `openai/gpt-oss-120b` | Groq model id. |
+| `GEMINI_API_KEY` | No | — | Gemini key — fallback, used only when `GROQ_API_KEY` is unset. |
+| `GEMINI_MODEL` | No | `gemini-3.5-flash` | Gemini model id (fallback path). |
 | `EVIDENCE_PROVIDER` | No | `auto` | `auto` \| `tavily` \| `brave` \| `serpapi` \| `wikipedia` \| `duckduckgo` \| `none`. |
 | `TAVILY_API_KEY` | No | — | Enables Tavily in `auto` mode. |
 | `BRAVE_API_KEY` | No | — | Enables Brave Search in `auto` mode. |
 | `SERPAPI_API_KEY` | No | — | Enables SerpApi in `auto` mode. |
 | `PORT` | No | `5001` | Flask port. |
 | `ALLOWED_ORIGINS` | No | `http://localhost:5173,…` | CORS allow-list (comma-separated). |
-| `AI_TIMEOUT_SECONDS` | No | `45` | Gemini request timeout. |
+| `AI_TIMEOUT_SECONDS` | No | `45` | AI provider request timeout. |
 | `SEARCH_TIMEOUT_SECONDS` | No | `15` | Search request timeout. |
 | `MAX_INPUT_CHARS` | No | `8000` | Server-side input limit. |
 | `DEMO_MODE` | No | `true` | When `true` **and** no Gemini key is set, returns a clearly labeled DEMO analysis (local heuristics only; verdict always `Unverified`). It never pretends to be real AI. |
